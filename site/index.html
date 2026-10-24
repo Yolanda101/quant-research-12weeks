@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="学习研究数据和信息时点，在线运行 Python，检查历史股票池、财报版本和收益标签。">
+  <title>研究数据和信息时点 · 量化研究</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">跳到正文</a>
+  <header class="sidebar" id="sidebar" aria-label="课程导航">
+    <a class="brand" href="#overview"><span class="brand-mark" aria-hidden="true">∑</span><span>量化研究<small>第一周 · 研究数据和信息时点</small></span></a>
+    <nav class="main-nav" aria-label="学习内容">
+      <a href="#overview" data-nav="overview"><span aria-hidden="true">▦</span> 本周概览</a>
+      <a href="#week/01/lesson/schema" data-nav="lesson"><span aria-hidden="true">▤</span> 讲义</a>
+      <a href="#week/01/workbench" data-nav="workbench"><span aria-hidden="true">◷</span> 数据实验</a>
+      <a href="#lab" data-nav="lab"><span aria-hidden="true">⌘</span> 代码练习</a>
+      <a href="#assignment" data-nav="assignment"><span aria-hidden="true">▢</span> 本周作业</a>
+      <a href="#week/01/records" data-nav="records"><span aria-hidden="true">☑</span> 学习记录</a>
+    </nav>
+    <nav id="week-nav" class="week-nav" aria-label="课程周次"></nav>
+  </header>
+  <div class="shell">
+    <div id="notice" class="notice" role="status" hidden></div>
+    <main id="main" tabindex="-1"></main>
+    <div class="side-bottom">
+      <div class="save-state"><span></span> <span id="storage-label">记录保存在此浏览器</span></div>
+      <div class="backup-actions"><button id="export-progress">导出记录</button><button id="import-progress">导入记录</button></div>
+      <input type="file" id="progress-file" accept="application/json,.json" hidden>
+    </div>
+    <footer class="footer"><span>量化研究 · 第一周</span><span>教学数据为虚构样本</span></footer>
+  </div>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <noscript>请启用 JavaScript，以使用在线练习和学习记录。</noscript>
+</body>
+</html>
