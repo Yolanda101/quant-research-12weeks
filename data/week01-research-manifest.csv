@@ -1,0 +1,12 @@
+file,role,available_at,version,fields
+week01-research-universe.csv,历史存续区间,教学假设：状态生效前已公开,teaching-2026-10-24-v1,"asset,name,listed_at,delisted_at"
+week01-research-reports.csv,财报可用版本,逐行available_at,teaching-2026-10-24-v1,"asset,period_end,published_at,available_at,version,value"
+week01-research-quality.csv,含缺失和重复的审计样本,不适用，独立故障样本,teaching-2026-10-24-v1,"observed_at,asset,raw_close,volume"
+week01-research-prices.csv,原始价格及开盘、收盘可用时点,逐行available_at,teaching-2026-10-24-v1,"asset,observed_at,available_at,raw_open,raw_close,open_available_at,close_available_at,tradable"
+week01-research-dividends.csv,现金分红事件,逐行ex_at和paid_at,teaching-2026-10-24-v1,"asset,ex_at,paid_at,cash_per_share"
+week01-research-calendar.csv,合成交易日历,教学假设：研究开始前已公布,teaching-2026-10-24-v1,"date,session_open,session_close,is_observation_day"
+week01-research-labels.csv,标签起止和可用时点,逐行label_available_at,teaching-2026-10-24-v1,"sample,signal_at,entry_at,exit_at,label_available_at"
+week01-research-texts.csv,带可用时间的公告文本,逐行available_at,teaching-2026-10-24-v1,"document_id,asset,published_at,available_at,version,text"
+week01-research-encoders.csv,编码器训练截止和发布时间,逐行training_cutoff和released_at,teaching-2026-10-24-v1,"encoder,version,training_cutoff,released_at"
+week01-research-minutes.csv,完成后才可见的分钟记录,逐行available_at,teaching-2026-10-24-v1,"asset,bar_start,bar_end,available_at,price,volume"
+week01-research-panel.csv,开发期月度观察，不用于逐日成交重放,逐行available_at,teaching-2026-10-24-v1,"observed_at,available_at,asset,raw_open,raw_close,volume,market_cap,adjustment_multiplier,tradable"
