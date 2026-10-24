@@ -1,0 +1,58 @@
+name: 发布学习网站
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'lessons/**'
+      - 'assignments/**'
+      - 'data/**'
+      - 'scripts/prepare.mjs'
+      - 'package.json'
+      - '.github/workflows/pages.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 获取项目
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: 配置 Pages
+        uses: actions/configure-pages@v5
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 检查学习记录和数据实验
+        run: node --test tests/*.test.mjs
+      - name: 上传网站
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 发布到 Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
