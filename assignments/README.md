@@ -1,6 +1,6 @@
 # 第一周作业提交
 
-在[学习网站](https://quant-learning-records.zanewan1107.chatgpt.site/course/index.html#week/01/overview)登录后完成六项任务。进度和代码草稿会自动保存。
+首次学习时，打开教师发来的注册链接，设置用户名和密码。以后在[学习网站](https://quant-learning-records.zanewan1107.chatgpt.site/course/index.html#week/01/overview)登录，完成六项任务。进度和代码草稿会自动保存。
 
 1. 在作业页补齐代码，运行并检查。
 2. 写完三段解释和五条追溯笔记。
