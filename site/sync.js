@@ -17,12 +17,19 @@ export class PrivateSync{
   try{response=await this.fetcher(path,{method,credentials:'same-origin',headers,body:body===undefined?undefined:JSON.stringify(body),signal:controller.signal});try{data=await response.json();}catch{throw new Error('服务暂时无法读取，请稍后重试。');}}
   catch(error){if(error.name==='AbortError')throw new Error('连接超时，请稍后重试。');throw error;}finally{globalThis.clearTimeout(timeout);}
   if(generation!==this.generation||(!anonymous&&account!==this.user?.id))throw new Error('账号已变更，请重新打开学习记录。');
-  if(!response.ok){const error=new Error(data.error||'请求没有完成，请稍后重试。');error.status=response.status;error.data=data;if(response.status===401||String(data.code).toLowerCase()==='account_changed')this.emit('expired');throw error;}
+  if(!response.ok){const error=new Error(data.error||'请求没有完成，请稍后重试。');error.status=response.status;error.data=data;if(!anonymous&&(response.status===401||String(data.code).toLowerCase()==='account_changed'))this.emit('expired');throw error;}
   return data;
  }
+ async authenticate(mode,credentials){
+  if(!['login','register'].includes(mode))throw new Error('登录方式不支持');
+  const result=await this.request('/api/auth/'+mode,{method:'POST',body:credentials,anonymous:true});
+  await this.start();return result;
+ }
+
  async start(){
   if(!this.enabled){this.emit('disabled');return;}
-  const generation=++this.generation;this.emit('checking');
+  if(this.timer)this.cancel(this.timer);this.timer=null;this.inflight=null;
+  const generation=++this.generation;this.user=null;this.state=null;this.version=0;this.updatedAt=null;this.dirty=false;this.conflict=null;this.emit('checking');
   try{
    const result=await this.request('/api/me',{anonymous:true});if(generation!==this.generation)return;
    if(!result.user){this.user=null;this.emit('guest');return;}
@@ -67,5 +74,5 @@ export class PrivateSync{
  useRemote(){if(!this.conflict)return;this.state=clone(this.conflict.state);this.version=this.conflict.version;this.updatedAt=this.conflict.updatedAt||null;this.conflict=null;this.dirty=false;this.cache();this.onState(clone(this.state));this.emit('ready');}
  keepLocal(){if(!this.conflict)return;this.version=this.conflict.version;this.conflict=null;this.dirty=true;this.cache();this.emit('pending');return this.flush();}
  importLocal(state){if(!this.user||this.phase==='expired'||this.phase==='loading')return;this.state=this.normalize(clone(state));this.onState(clone(this.state));this.dirty=true;this.cache();if(this.phase!=='conflict'){this.emit('pending');this.queue();}}
- stop(){this.generation++;if(this.timer)this.cancel(this.timer);this.timer=null;this.inflight=null;this.user=null;this.state=null;this.emit(this.enabled?'guest':'disabled');}
+ stop(){this.generation++;if(this.timer)this.cancel(this.timer);this.timer=null;this.inflight=null;this.user=null;this.state=null;this.dirty=false;this.version=0;this.updatedAt=null;this.conflict=null;this.emit(this.enabled?'guest':'disabled');}
 }

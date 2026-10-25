@@ -2,7 +2,7 @@ import {weeks,weekById} from './curriculum.js';
 import {PythonEngine} from './python-engine.js';
 import {KEY,COURSE_KEY,LEGACY_COURSE_KEY,freshCourseState,normalizeCourseState,overallProgress} from './state.js';
 import {mountWorkbench} from './week01-workbench.js';
-import {mountFeedback,mountTeacher,updateAccountStatus,authLink,isSyncLoading} from './feedback.js';
+import {mountFeedback,mountTeacher,updateAccountStatus,isSyncLoading} from './feedback.js';
 import {PrivateSync} from './sync.js';
 
 const $=selector=>document.querySelector(selector);
@@ -117,14 +117,21 @@ function refreshSyncStatus(snapshot=sync?.snapshot()){
  const bar=$('#account-bar');
  if(bar){
   const user=snapshot.user;
-  bar.innerHTML=user?`<span>${escape(user.name||user.email||'学习账号')}</span><span class="account-sync" data-phase="${escape(snapshot.phase)}">${escape(snapshot.label)}</span>${user.role==='teacher'?'<a class="text-link" href="#teacher">学员记录</a>':''}<a class="text-link" href="${url('records')}">学习账号</a>${snapshot.phase==='expired'?`<a class="text-link" href="${authLink()}" target="_top">重新登录</a>`:''}`:portalConfig.backendEnabled?`<span>${escape(snapshot.label)}</span><a class="text-link" href="${authLink()}" target="_top">登录学习账号</a>`:portalConfig.privatePortalUrl?`<span>登录后自动同步学习记录</span><a class="text-link" href="${escape(portalConfig.privatePortalUrl+'#week/01/records')}">进入学习账号 ↗</a>`:'';
+  bar.innerHTML=user?`<span>${escape(user.name||user.email||'学习账号')}</span><span class="account-sync" data-phase="${escape(snapshot.phase)}">${escape(snapshot.label)}</span>${user.role==='teacher'?'<a class="text-link" href="#teacher">学员记录</a>':''}<a class="text-link" href="${url('records')}">学习账号</a>${snapshot.phase==='expired'?`<a class="text-link" href="${url('records')}">重新登录</a>`:''}`:portalConfig.backendEnabled?`<span>${escape(snapshot.label)}</span><a class="text-link" href="${url('records')}">登录学习账号</a>`:portalConfig.privatePortalUrl?`<span>登录后自动同步学习记录</span><a class="text-link" href="${escape(portalConfig.privatePortalUrl+'#week/01/records')}">进入学习账号 ↗</a>`:'';
  }
  const root=$('#feedback-root');if(root)updateAccountStatus(root,snapshot,{onRemote:()=>{if(confirm('使用云端记录？当前草稿可以先导出备份。'))sync.useRemote();},onLocal:()=>{if(confirm('用当前草稿更新云端记录？'))sync.keepLocal();},onExport:()=>download('quant-study-progress.json',JSON.stringify(course,null,2),'application/json')});
 }
+async function logoutStudent(){
+ if(!sync?.user)return;
+ sync.cache();await sync.request('/api/auth/logout',{method:'POST',body:{}});
+ course=freshCourseState(weeks);state=course.weeks[week.id];anonymousCourse=null;
+ sync.stop();save();render();toast('已退出账号');
+}
+
 function recordsPage(){
  const profile=course.feedback[week.id]||(course.feedback[week.id]={});
  $('#main').innerHTML=heading('学习记录','查看完成情况、提交作业和向教师提问。')+'<div id="feedback-root"></div>';
- mountFeedback($('#feedback-root'),{week,state,profile,onChange:()=>save(),sync,config:portalConfig,anonymousAvailable:!!anonymousCourse&&Object.values(anonymousCourse.weeks||{}).some(w=>w.read?.length||Object.keys(w.drafts||{}).length),onImportAnonymous:importAnonymous,onConflict:()=>refreshSyncStatus()});
+ mountFeedback($('#feedback-root'),{week,state,profile,onChange:()=>save(),sync,config:portalConfig,anonymousAvailable:!!anonymousCourse&&Object.values(anonymousCourse.weeks||{}).some(w=>w.read?.length||Object.keys(w.drafts||{}).length),onImportAnonymous:importAnonymous,onConflict:()=>refreshSyncStatus(),onLogout:logoutStudent});
 }
 function updateNavigation(route){
  const weekLabel=`第${chinese[week.number]}周 · ${week.title}`;
@@ -157,7 +164,7 @@ anonymousCourse=JSON.parse(JSON.stringify(course));
 async function initializeSync(){
  try{const response=await fetch('./portal-config.json',{cache:'no-store'});if(response.ok)portalConfig=await response.json();}catch{}
  let identity='',previousPhase='';
- sync=new PrivateSync({enabled:portalConfig.backendEnabled===true,fetcher:fetch.bind(window),storage:browserStorage,fresh:()=>freshCourseState(weeks),normalize:raw=>normalizeCourseState(raw,weeks),onState:next=>{course=next;state=course.weeks[week.id];if(!isSyncLoading(sync?.phase))render();},onStatus:snapshot=>{refreshSyncStatus(snapshot);const nextIdentity=(snapshot.user?.id||'')+':'+(snapshot.user?.role||'')+':'+(['guest','error'].includes(snapshot.phase)?snapshot.phase:'');const loadingChanged=isSyncLoading(previousPhase)!==isSyncLoading(snapshot.phase),identityChanged=nextIdentity!==identity;previousPhase=snapshot.phase;identity=nextIdentity;if(loadingChanged||(identityChanged&&(location.hash.includes('/records')||location.hash.startsWith('#teacher'))))render();}});
+ sync=new PrivateSync({enabled:portalConfig.backendEnabled===true,fetcher:fetch.bind(window),storage:browserStorage,fresh:()=>freshCourseState(weeks),normalize:raw=>normalizeCourseState(raw,weeks),onState:next=>{course=next;state=course.weeks[week.id];if(!isSyncLoading(sync?.phase))render();},onStatus:snapshot=>{refreshSyncStatus(snapshot);const nextIdentity=(snapshot.user?.id||'')+':'+(snapshot.user?.role||'')+':'+(['guest','error','expired'].includes(snapshot.phase)?snapshot.phase:'');const loadingChanged=isSyncLoading(previousPhase)!==isSyncLoading(snapshot.phase),identityChanged=nextIdentity!==identity;previousPhase=snapshot.phase;identity=nextIdentity;if(loadingChanged||(identityChanged&&(location.hash.includes('/records')||location.hash.startsWith('#teacher'))))render();}});
  refreshSyncStatus();await sync.start();
  if(location.hash.includes('/records')||location.hash.startsWith('#teacher'))render();
 }
