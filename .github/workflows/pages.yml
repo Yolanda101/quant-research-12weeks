@@ -1,4 +1,4 @@
-name: 发布学习网站
+name: 发布学习入口
 
 on:
   workflow_dispatch:
@@ -10,6 +10,8 @@ on:
       - 'assignments/**'
       - 'data/**'
       - 'scripts/prepare.mjs'
+      - 'scripts/build-pages-entry.mjs'
+      - 'tests/pages-entry.test.mjs'
       - 'package.json'
       - '.github/workflows/pages.yml'
 
@@ -34,12 +36,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: 检查学习记录和数据实验
-        run: node --test tests/*.test.mjs
-      - name: 上传网站
+      - name: 检查学习入口
+        run: node --test tests/pages-entry.test.mjs
+      - name: 生成登录入口
+        run: node scripts/build-pages-entry.mjs
+      - name: 上传入口
         uses: actions/upload-pages-artifact@v4
         with:
-          path: site
+          path: pages-site
 
   deploy:
     needs: build
