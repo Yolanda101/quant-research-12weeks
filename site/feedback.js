@@ -69,55 +69,6 @@ export async function verifySubmission(value,submissionId,fetcher=globalThis.fet
  finally{clearTimeout(timer);}
 }
 
-export function mountFeedback(root,{week,state,profile,onChange=()=>{}}){
- if(profile.verifiedUrl){try{profile.verifiedUrl=parseIssueURL(profile.verifiedUrl).url;}catch{profile.verifiedUrl='';profile.verifiedAt='';}}
- let candidateId=profile.submissionId||makeId(),opened=!!profile.submissionId,busy=false;
- const save=()=>onChange(profile);
- const $=selector=>root.querySelector(selector);
- root.innerHTML=`<div class="feedback-stack"><section class="panel homework-brief feedback-panel"><h2>准备学习记录</h2><p>讲义、练习和作业草稿会保存在此浏览器。提交后，教师可以集中查看并回复。</p><p>提交内容会公开显示，请使用学习代号。提交时需要登录 GitHub。</p><div class="feedback-fields"><label for="feedback-student">学习代号</label><input id="feedback-student" maxlength="60" autocomplete="nickname" value="${escape(profile.studentId)}" placeholder="例如 student-01"><label for="feedback-question">当前疑问</label><textarea id="feedback-question" maxlength="12000" placeholder="写出卡住的步骤、尝试过的方法或希望教师检查的内容。">${escape(profile.question)}</textarea><label for="feedback-assignment">作业链接，可留空</label><input id="feedback-assignment" type="url" maxlength="2000" value="${escape(profile.assignmentUrl)}" placeholder="https://github.com/…"></div></section><section class="panel homework-brief feedback-panel"><h2>记录预览</h2><pre id="feedback-preview" class="feedback-preview"></pre><p>完整记录还包含三段解释和追溯笔记。作业代码请在作业页导出，再作为附件提交。</p><div class="download-row"><button id="feedback-copy" class="button secondary">复制完整记录</button><button id="feedback-download" class="button secondary">导出学习记录 .txt ↓</button></div><div id="feedback-action-status" class="form-feedback" role="status"></div></section><section class="panel homework-brief feedback-panel"><h2>提交给教师</h2><ol><li>导出学习记录和作业文件。</li><li>点击下方按钮，在 GitHub 核对内容并添加附件。</li><li>点击 GitHub 页面中的 创建按钮。</li><li>把生成的 Issue 链接粘贴到下方，再核验提交。</li></ol><p id="feedback-length-note" class="muted" hidden></p><div class="download-row"><button id="feedback-open" class="button primary">去 GitHub 提交 ↗</button></div><p id="feedback-submit-status" class="form-feedback" role="status"></p><div class="feedback-fields"><label for="feedback-issue">已提交的 Issue 链接</label><input id="feedback-issue" type="url" value="${escape(profile.submissionUrl)}" placeholder="https://github.com/${REPOSITORY}/issues/123"></div><div class="download-row"><button id="feedback-verify" class="button secondary">核验提交</button><a id="feedback-replies" class="button secondary" target="_blank" rel="noopener noreferrer" hidden>查看教师回复 ↗</a></div><p id="feedback-verify-status" class="form-feedback" role="status"></p></section></div>`;
- const build=()=>buildSubmission(week,state,profile,candidateId);
- const record=()=>completeRecord(week,state,profile,candidateId);
- function update(){
-  $('#feedback-preview').textContent=progressSummary(week,state);
-  let long=false;try{long=build().attachmentRequired;}catch{long=true;}
-  $('#feedback-length-note').hidden=!long;
-  $('#feedback-length-note').textContent='疑问较长，请导出完整记录作为附件。GitHub 表单保留进度摘要和提交编号。';
-  $('#feedback-submit-status').textContent=profile.verifiedUrl?'已核验上次提交。新的学习进度需重新提交。':opened?'待完成提交。请在 GitHub 点击 创建按钮，再回来核验链接。':'尚未提交。';
-  const reply=$('#feedback-replies');reply.hidden=!profile.verifiedUrl;if(profile.verifiedUrl)reply.href=profile.verifiedUrl;
- }
- function changed(){
-  profile.studentId=$('#feedback-student').value;profile.question=$('#feedback-question').value;profile.assignmentUrl=$('#feedback-assignment').value;
-  if(opened||profile.verifiedUrl){candidateId=makeId();profile.submissionId='';profile.verifiedUrl='';profile.verifiedAt='';profile.submissionUrl='';$('#feedback-issue').value='';opened=false;}
-  save();update();
- }
- for(const id of ['feedback-student','feedback-question','feedback-assignment'])$('#'+id).oninput=changed;
- $('#feedback-issue').oninput=()=>{profile.submissionUrl=$('#feedback-issue').value;save();};
- $('#feedback-copy').onclick=async()=>{
-  try{await navigator.clipboard.writeText(record());$('#feedback-action-status').textContent='完整记录已复制。';}
-  catch{const area=document.createElement('textarea');area.value=record();root.append(area);area.select();let copied=false;try{copied=document.execCommand('copy');}catch{}area.remove();$('#feedback-action-status').textContent=copied?'完整记录已复制。':'复制失败，请导出学习记录。';}
- };
- $('#feedback-download').onclick=()=>{
-  profile.submissionId=candidateId;opened=true;save();update();
-  const objectURL=URL.createObjectURL(new Blob([record()],{type:'text/plain;charset=utf-8'})),link=document.createElement('a');link.href=objectURL;link.download='week01-learning-record.txt';link.click();setTimeout(()=>URL.revokeObjectURL(objectURL),1000);$('#feedback-action-status').textContent='学习记录已导出，请保留文件并在 GitHub 添加附件。';
- };
- $('#feedback-open').onclick=()=>{
-  if(!profile.studentId?.trim()){$('#feedback-action-status').textContent='请先填写学习代号。';$('#feedback-student').focus();return;}
-  if(profile.assignmentUrl?.trim()){try{const u=new URL(profile.assignmentUrl);if(!['https:','http:'].includes(u.protocol))throw new Error();}catch{$('#feedback-action-status').textContent='请填写完整的作业链接，或清空这一项。';$('#feedback-assignment').focus();return;}}
-  try{
-   if(profile.verifiedUrl){candidateId=makeId();profile.verifiedUrl='';profile.verifiedAt='';profile.submissionUrl='';$('#feedback-issue').value='';}
-   const submission=build();profile.submissionId=candidateId;opened=true;save();update();
-   const link=document.createElement('a');link.href=submission.url;link.target='_blank';link.rel='noopener noreferrer';root.append(link);link.click();link.remove();
-  }catch(error){$('#feedback-action-status').textContent=error.message;}
- };
- $('#feedback-verify').onclick=async()=>{
-  if(busy)return;busy=true;$('#feedback-verify').disabled=true;$('#feedback-verify-status').textContent='正在核验提交。';
-  const pendingId=profile.submissionId,pendingURL=profile.submissionUrl;
-  try{
-   const result=await verifySubmission(pendingURL,pendingId);
-   if(!root.isConnected||profile.submissionId!==pendingId||profile.submissionUrl!==pendingURL)return;
-   profile.verifiedUrl=result.url;profile.verifiedAt=result.verifiedAt;profile.submissionUrl=result.url;$('#feedback-issue').value=result.url;save();update();$('#feedback-verify-status').textContent='已找到本次提交，教师可以查看。';
-  }catch(error){if(root.isConnected)$('#feedback-verify-status').textContent=error.message;}
-  finally{busy=false;if(root.isConnected)$('#feedback-verify').disabled=false;}
- };
- update();
+export function mountFeedback(root){
+  root.innerHTML = '<section class="panel feedback-panel"><h2>学习记录</h2><p>公开提交入口已关闭。你的学习记录仍保存在当前浏览器。</p><p>登录同步和私有答疑正在接入。</p></section>';
 }
