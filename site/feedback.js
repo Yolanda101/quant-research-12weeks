@@ -1,74 +1,60 @@
-export const REPOSITORY='Yolanda101/quant-research-12weeks';
-const GITHUB='https://github.com/'+REPOSITORY;
-const MAX_URL_LENGTH=8000;
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const marker=id=>'<!-- quant-study:'+id+' -->';
-const makeId=()=>globalThis.crypto?.randomUUID?.()||Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,12);
-const items=(definitions,selected)=>definitions.map(item=>(selected.includes(item.id)?'已完成':'未完成')+' · '+item.title).join('\n');
-
+const time=value=>value?new Date(value).toLocaleString('zh-CN'):'尚未同步';
 export function progressSummary(week,state){
- const read=Array.isArray(state.read)?state.read:[],passed=Array.isArray(state.passed)?state.passed:[];
- const quizzes=week.lessons.map(lesson=>lesson.title+'：'+(Number.isInteger(state.quiz?.[lesson.id])?state.quiz[lesson.id]+' / '+lesson.quiz.length:'未作答'));
- const review=state.assignmentReview;
- let assignment='尚无代码检查记录';
- if(review===true||review?.passed===true)assignment='代码检查通过，文字待教师阅读';
- else if(review?.passed===false)assignment='代码检查未全部通过';
- if(review?.checkedAt)assignment+='，检查时间 '+review.checkedAt;
- return ['第一周学习记录','课程：'+week.title,'讲义已读：'+read.filter(id=>week.lessons.some(item=>item.id===id)).length+' / '+week.lessons.length,items(week.lessons,read),'','测验',...quizzes,'','练习通过：'+passed.filter(id=>week.exercises.some(item=>item.id===id)).length+' / '+week.exercises.length,items(week.exercises,passed),'','作业：'+assignment].join('\n');
+ const read=state.read||[],passed=state.passed||[];
+ return [`第 ${week.id} 周 · ${week.title}`,`讲义已读：${read.length} / ${week.lessons.length}`,`练习通过：${passed.length} / ${week.exercises.length}`,...week.lessons.map(l=>`${read.includes(l.id)?'已读':'未读'} · ${l.title}`),'',...week.exercises.map(e=>`${passed.includes(e.id)?'通过':'未通过'} · ${e.title}`),'',`作业检查：${state.assignmentReview?.passed===true?'代码检查通过':state.assignmentReview?.passed===false?'未全部通过':'尚未检查'}`].join('\n');
 }
-
-export function completeRecord(week,state,profile,submissionId){
- const text=['学习代号：'+(profile.studentId?.trim()||'未填写'),'提交编号：'+submissionId,'',progressSummary(week,state),'','当前疑问',profile.question?.trim()||'暂无',''];
- if(profile.assignmentUrl?.trim())text.push('作业链接',profile.assignmentUrl.trim(),'');
- text.push('文字解释');
- for(let i=0;i<3;i++)text.push(String(i+1)+'. '+(week.assignment?.questions?.[i]||'解释'),state.answers?.[i]?.trim()||'未填写','');
- text.push('五条记录的追溯笔记',state.auditNotes?.trim()||'未填写','',marker(submissionId));
- return text.join('\n');
+export const isSyncLoading=phase=>phase==='checking'||phase==='loading';
+export function authLink(action='signin',pathname=globalThis.location?.pathname||'/course/index.html'){return `/${action==='signout'?'signout':'signin'}-with-chatgpt?return_to=${encodeURIComponent(pathname+'#week/01/records')}`;}
+function threadHTML(thread,{reply=true}={}){
+ return `<article class="private-thread"><div class="thread-meta"><span>${escape(thread.authorName||thread.authorRole||'学员')}</span><time>${escape(time(thread.createdAt))}</time></div><p>${escape(thread.body)}</p>${(thread.replies||[]).map(r=>`<div class="thread-reply"><div class="thread-meta"><span>${escape(r.authorRole==='teacher'?'教师':r.authorName||'学员')}</span><time>${escape(time(r.createdAt))}</time></div><p>${escape(r.body)}</p></div>`).join('')}${reply?`<form data-reply="${escape(thread.id)}" class="private-reply-form"><label>回复<textarea name="body" maxlength="12000" required placeholder="写下回复"></textarea></label><button class="button secondary small" type="submit">发送回复</button><span role="status"></span></form>`:''}</article>`;
 }
-
-export function buildSubmission(week,state,profile,submissionId){
- const title='[第一周学习记录] '+(profile.studentId?.trim()||'未填写');
- const summary=progressSummary(week,state);
- const common=['学习代号：'+(profile.studentId?.trim()||'未填写'),'提交编号：'+submissionId,'',summary,''];
- if(profile.assignmentUrl?.trim())common.push('作业链接：'+profile.assignmentUrl.trim(),'');
- const ending=['请将网站导出的学习记录 .txt 和作业文件拖入此处，再点击 创建按钮。','',marker(submissionId)];
- const full=[...common,'当前疑问',profile.question?.trim()||'暂无','',...ending].join('\n');
- const makeURL=body=>GITHUB+'/issues/new?'+new URLSearchParams({title,body}).toString();
- let url=makeURL(full),attachmentRequired=false;
- if(url.length>MAX_URL_LENGTH){
-  attachmentRequired=true;
-  const short=['学习代号：'+(profile.studentId?.trim()||'未填写'),'提交编号：'+submissionId,'',summary,'','疑问和文字记录较长，完整内容在学习记录附件中。','请先回到学习网站导出学习记录 .txt，再将文件拖入此处。','',marker(submissionId)].join('\n');
-  url=makeURL(short);
+function attachReplies(root,sync,reload){root.querySelectorAll('[data-reply]').forEach(form=>form.onsubmit=async event=>{
+ event.preventDefault();const input=form.elements.body,body=input.value.trim(),button=form.querySelector('button'),status=form.querySelector('[role=status]');if(!body)return;button.disabled=true;status.textContent='正在发送。';
+ try{await sync.request('/api/questions/'+encodeURIComponent(form.dataset.reply)+'/replies',{method:'POST',body:{body}});if(!root.isConnected)return;input.value='';await reload();}
+ catch(error){if(root.isConnected)status.textContent=error.message;}finally{if(root.isConnected)button.disabled=false;}
+ });}
+export function mountFeedback(root,{week,state,profile,onChange=()=>{},sync,config={},anonymousAvailable=false,onImportAnonymous=()=>{},onConflict=()=>{}}){
+ const status=sync?.snapshot()||{phase:'disabled'},user=status.user;
+ if(config.backendEnabled&&isSyncLoading(status.phase)){root.innerHTML='<section class="panel homework-brief"><p role="status">正在读取学习记录，请稍候。</p></section>';return;}
+ root.innerHTML=`<div class="feedback-stack"><section class="panel homework-brief feedback-panel"><h2>学习账号</h2><div id="private-account"></div></section><section class="panel homework-brief feedback-panel"><h2>本周记录</h2><pre class="feedback-preview">${escape(progressSummary(week,state))}</pre><p>讲义、练习代码、作业和文字解释会随学习保存。</p></section><div id="private-content"></div></div>`;
+ const account=root.querySelector('#private-account'),content=root.querySelector('#private-content');
+ if(!config.backendEnabled){
+  account.innerHTML='<p>当前页面的记录保存在此浏览器。</p>'+(config.privatePortalUrl?`<a class="button primary" href="${escape(config.privatePortalUrl+'#week/01/records')}">进入学习账号 ↗</a><p>登录后可以同步进度、提交作业和向教师提问。</p><p>已有浏览器记录可先点击页底的“导出记录”，进入学习账号后再导入。</p>`:'');return;
  }
- if(url.length>MAX_URL_LENGTH)throw new Error('记录摘要过长，请复制完整记录，在 GitHub 新建 Issue。');
- return {url,attachmentRequired,title,record:completeRecord(week,state,profile,submissionId)};
+ if(!user){account.innerHTML=status.phase==='checking'?'<p>正在确认登录。</p>':`<p>登录后自动同步学习进度。作业、问题和回复仅本人及教师可见。</p><a class="button primary" href="${authLink()}" target="_top">登录学习账号</a>${status.error?'<p class="form-feedback">'+escape(status.error)+'</p>':''}`;return;}
+ account.innerHTML=`<p class="account-name">${escape(user.name||user.email||'学习账号')} <span class="data-badge">${user.role==='teacher'?'教师':'学员'}</span></p><p data-sync-status>${escape(status.label)}${status.updatedAt?' · '+escape(time(status.updatedAt)):''}</p><div class="download-row"><button id="sync-now" class="button secondary small">立即同步</button>${anonymousAvailable?'<button id="import-anonymous" class="button secondary small">导入登录前的记录</button>':''}${user.role==='teacher'?'<a href="#teacher" class="button secondary small">查看学员</a>':''}<a class="text-link" href="${authLink('signout')}" target="_top" id="private-signout">退出账号</a></div><a id="private-relogin" class="button primary" href="${authLink()}" target="_top" hidden>重新登录</a><div id="sync-conflict"></div>`;
+ root.querySelector('#sync-now').onclick=async()=>{if(sync.snapshot().dirty)await sync.syncNow();else await sync.reload();};
+ if(root.querySelector('#import-anonymous'))root.querySelector('#import-anonymous').onclick=onImportAnonymous;
+ root.querySelector('#private-signout').onclick=event=>{if(sync.snapshot().dirty&&!confirm('仍有记录等待同步。草稿保留在此浏览器，退出账号？'))event.preventDefault();};
+ content.innerHTML=`<section class="panel homework-brief feedback-panel"><h2>提交作业</h2><p>提交前会同步当前代码、解释和追溯笔记。提交后教师可查看这一版作业。</p><button id="private-assignment" class="button primary">提交本周作业</button><p id="assignment-status" class="form-feedback" role="status"></p><div id="assignment-history"></div></section><section class="panel homework-brief feedback-panel"><h2>向教师提问</h2><p>问题和回复仅你和教师可见。</p><form id="private-question" class="feedback-fields"><label for="private-question-body">当前疑问</label><textarea id="private-question-body" maxlength="12000" required placeholder="写出卡住的步骤、尝试过的方法或希望检查的内容。">${escape(profile.question)}</textarea><button type="submit" class="button primary">发送问题</button><p id="question-status" class="form-feedback" role="status"></p></form><div id="private-threads" aria-live="polite"></div></section><section class="panel homework-brief feedback-panel"><h2>教师反馈</h2><div id="private-feedback" aria-live="polite"></div></section>`;
+ const question=root.querySelector('#private-question-body');question.oninput=()=>{profile.question=question.value;onChange();};
+ async function load(){try{const [threads,assignments]=await Promise.all([sync.request('/api/questions'),sync.request('/api/assignment')]);if(!root.isConnected)return;
+  root.querySelector('#private-threads').innerHTML=(threads.questions||[]).map(t=>threadHTML(t)).join('')||'<p class="muted">暂无问题。</p>';
+  root.querySelector('#private-feedback').innerHTML=(threads.feedback||[]).map(t=>threadHTML(t)).join('')||'<p class="muted">暂无教师反馈。</p>';
+  root.querySelector('#assignment-history').innerHTML=(assignments.assignments||[]).filter(a=>a.weekId===week.id).map(a=>`<p class="submission-history">已提交 · ${escape(time(a.submittedAt))} · 记录版本 ${escape(a.stateVersion)}</p>`).join('');
+  attachReplies(root,sync,load);
+ }catch(error){if(root.isConnected)root.querySelector('#private-threads').textContent=error.message;}}
+ root.querySelector('#private-assignment').onclick=async event=>{const button=event.currentTarget,label=root.querySelector('#assignment-status');button.disabled=true;label.textContent='正在同步作业。';try{if(!await sync.syncNow())throw new Error('请先完成同步，再提交作业。');await sync.request('/api/assignment',{method:'POST',body:{weekId:week.id}});if(!root.isConnected)return;label.textContent='作业已提交，教师可以查看。';await load();}catch(error){if(root.isConnected)label.textContent=error.message;}finally{if(root.isConnected)button.disabled=false;}};
+ root.querySelector('#private-question').onsubmit=async event=>{event.preventDefault();const body=question.value.trim(),button=event.target.querySelector('button'),label=root.querySelector('#question-status');if(!body)return;button.disabled=true;label.textContent='正在发送。';try{await sync.request('/api/questions',{method:'POST',body:{body}});if(!root.isConnected)return;if(question.value.trim()===body){question.value='';profile.question='';onChange();}label.textContent='问题已发送。';await load();}catch(error){if(root.isConnected)label.textContent=error.message;}finally{if(root.isConnected)button.disabled=false;}};
+ onConflict();load();
 }
-
-export function parseIssueURL(value){
- let url;try{url=new URL(value);}catch{throw new Error('请粘贴 GitHub 提交页面的链接。');}
- if(url.protocol!=='https:'||url.hostname!=='github.com'||url.port||url.username||url.password)throw new Error('请使用本课程仓库的 GitHub Issue 链接。');
- const match=url.pathname.match(/^\/Yolanda101\/quant-research-12weeks\/issues\/([1-9]\d*)\/?$/i);
- if(!match)throw new Error('请使用本课程仓库的 GitHub Issue 链接。');
- return {number:match[1],url:GITHUB+'/issues/'+match[1]};
+export function updateAccountStatus(root,snapshot,{onRemote,onLocal,onExport}={}){
+ const label=root.querySelector('[data-sync-status]');if(label)label.textContent=snapshot.label+(snapshot.updatedAt?' · '+time(snapshot.updatedAt):'')+(snapshot.error?'。'+snapshot.error:'');
+ const relogin=root.querySelector('#private-relogin');if(relogin)relogin.hidden=snapshot.phase!=='expired';
+ const conflict=root.querySelector('#sync-conflict');if(!conflict)return;
+ if(!snapshot.conflict){conflict.innerHTML='';return;}
+ conflict.innerHTML='<div class="sync-conflict"><h3>另一台设备已更新记录</h3><p>当前浏览器草稿仍然保留。选择要继续使用的版本。</p><div class="download-row"><button data-conflict="export" class="button secondary small">导出当前草稿</button><button data-conflict="remote" class="button secondary small">使用云端记录</button><button data-conflict="local" class="button secondary small">用当前草稿更新云端</button></div></div>';
+ conflict.querySelector('[data-conflict=export]').onclick=onExport;conflict.querySelector('[data-conflict=remote]').onclick=onRemote;conflict.querySelector('[data-conflict=local]').onclick=onLocal;
 }
-
-export async function verifySubmission(value,submissionId,fetcher=globalThis.fetch){
- if(!submissionId)throw new Error('请先准备本次学习记录，再核验链接。');
- const issue=parseIssueURL(value),controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);
+export async function mountTeacher(root,{sync,weeks,studentId,isCurrent=()=>root.isConnected}){
+ if(sync.snapshot().user?.role!=='teacher'){root.innerHTML='<section class="panel homework-brief"><h2>教师页面</h2><p>请使用教师账号登录。</p><a class="button secondary" href="#week/01/records">学习账号</a></section>';return;}
+ root.innerHTML='<section class="panel homework-brief"><p>正在读取学员记录。</p></section>';
  try{
-  const response=await fetcher('https://api.github.com/repos/'+REPOSITORY+'/issues/'+issue.number,{headers:{Accept:'application/vnd.github+json'},signal:controller.signal});
-  if(!response.ok){
-   if(response.status===404)throw new Error('未找到这份提交，请检查链接。');
-   if(response.status===403||response.status===429)throw new Error('GitHub 暂时限制查询，请稍后核验。');
-   throw new Error('暂时无法核验，请稍后重试。');
-  }
-  const raw=await response.json(),data=raw.value||raw;
-  if(data.pull_request||typeof data.body!=='string'||!data.body.includes(marker(submissionId)))throw new Error('这份提交不含本次记录编号，请核对后重试。');
-  return {url:issue.url,number:issue.number,title:data.title||'',author:data.user?.login||'',state:data.state,verifiedAt:new Date().toISOString()};
- }catch(error){if(error.name==='AbortError'||error instanceof TypeError)throw new Error('网络暂时不可用，记录仍保存在此浏览器。');if(error instanceof SyntaxError)throw new Error('暂时无法读取 GitHub 的核验结果，请稍后重试。');throw error;}
- finally{clearTimeout(timer);}
-}
-
-export function mountFeedback(root){
-  root.innerHTML = '<section class="panel feedback-panel"><h2>学习记录</h2><p>公开提交入口已关闭。你的学习记录仍保存在当前浏览器。</p><p>登录同步和私有答疑正在接入。</p></section>';
+  if(!studentId){const result=await sync.request('/api/teacher/students');if(!isCurrent())return;root.innerHTML=`<section class="panel homework-brief"><div class="panel-title-row"><h2>学员进度</h2><button id="teacher-refresh" class="button secondary small">刷新</button></div><p>查看每个人的进度、已提交作业和私有问题。</p><div class="student-list">${(result.students||[]).map(s=>`<a class="student-card" href="#teacher/student/${encodeURIComponent(s.id)}"><h3>${escape(s.name||s.email||'学员')}</h3><p>${escape(s.email||'')}</p><div class="student-metrics"><span>进度 ${escape(s.progress?.percent??0)}%</span><span>讲义 ${escape(s.progress?.read??0)} / ${escape(s.progress?.lessonTotal??6)}</span><span>练习 ${escape(s.progress?.passed??0)} / ${escape(s.progress?.exerciseTotal??6)}</span><span>作业 ${escape(s.assignmentCount??0)} 份</span><span>问题 ${escape(s.questionCount??0)} 条</span></div><p class="muted">上次同步：${escape(time(s.updatedAt))}</p></a>`).join('')||'<p class="muted">暂无学员记录。学员登录后会出现在这里。</p>'}</div></section>`;root.querySelector('#teacher-refresh').onclick=()=>mountTeacher(root,{sync,weeks,isCurrent});return;}
+  const result=await sync.request('/api/teacher/students/'+encodeURIComponent(studentId));if(!isCurrent())return;const student=result.student||{},course=result.state||{},current=course.weeks?.['01']||{},week=weeks.find(w=>w.id==='01');
+  root.innerHTML=`<div class="feedback-stack"><section class="panel homework-brief feedback-panel"><a href="#teacher" class="text-link">← 学员列表</a><h2 style="margin-top:18px">${escape(student.name||student.email||'学员')}</h2><p>${escape(student.email||'')}</p><p>上次同步：${escape(time(result.updatedAt))}</p><button id="teacher-detail-refresh" class="button secondary small">刷新记录</button><pre class="feedback-preview">${escape(progressSummary(week,current))}</pre></section><section class="panel homework-brief feedback-panel"><h2>已提交作业</h2>${(result.assignments||[]).map(a=>{const s=a.snapshot||a.state||{};return `<details class="assignment-snapshot"><summary>第 ${escape(a.weekId)} 周 · ${escape(time(a.submittedAt))} · 记录版本 ${escape(a.stateVersion)}</summary><h3>代码</h3><pre class="feedback-preview">${escape(s.drafts?.assignment||'未填写代码')}</pre><h3>文字解释</h3>${(s.answers||[]).map((answer,i)=>`<p class="private-text">${i+1}. ${escape(answer||'未填写')}</p>`).join('')}<h3>追溯笔记</h3><p class="private-text">${escape(s.auditNotes||'未填写')}</p><p>代码检查：${s.assignmentReview?.passed===true?'通过':s.assignmentReview?.passed===false?'未全部通过':'尚未检查'}</p></details>`;}).join('')||'<p class="muted">尚未提交作业。</p>'}<details class="assignment-snapshot"><summary>查看当前作业草稿</summary><pre class="feedback-preview">${escape(current.drafts?.assignment||'尚未填写')}</pre>${(current.answers||[]).map((a,i)=>`<p class="private-text">${i+1}. ${escape(a||'未填写')}</p>`).join('')}<p class="private-text">${escape(current.auditNotes||'')}</p></details><details class="assignment-snapshot"><summary>查看代码练习草稿</summary>${week.exercises.map(e=>`<h3>${escape(e.title)}</h3><pre class="feedback-preview">${escape(current.drafts?.[e.id]||'尚未填写')}</pre>`).join('')}</details></section><section class="panel homework-brief feedback-panel"><h2>学员问题</h2>${(result.questions||[]).map(t=>threadHTML(t)).join('')||'<p class="muted">暂无问题。</p>'}</section><section class="panel homework-brief feedback-panel"><h2>发送反馈</h2><p>反馈仅你和这位学员可见。</p><form id="teacher-feedback" class="feedback-fields"><label for="teacher-feedback-body">反馈内容</label><textarea id="teacher-feedback-body" maxlength="12000" required placeholder="写下需要修改的地方和下一步任务。"></textarea><button type="submit" class="button primary">发送反馈</button><p role="status"></p></form><div>${(result.feedback||[]).map(t=>threadHTML(t)).join('')}</div></section></div>`;
+  const reload=()=>mountTeacher(root,{sync,weeks,studentId,isCurrent});root.querySelector('#teacher-detail-refresh').onclick=reload;attachReplies(root,sync,reload);
+  root.querySelector('#teacher-feedback').onsubmit=async event=>{event.preventDefault();const form=event.target,body=form.querySelector('textarea').value.trim(),button=form.querySelector('button'),label=form.querySelector('[role=status]');if(!body)return;button.disabled=true;label.textContent='正在发送。';try{await sync.request('/api/teacher/students/'+encodeURIComponent(studentId)+'/feedback',{method:'POST',body:{body}});if(isCurrent())await reload();}catch(error){if(isCurrent())label.textContent=error.message;}finally{if(form.isConnected)button.disabled=false;}};
+ }catch(error){if(isCurrent())root.innerHTML='<section class="panel homework-brief"><p>'+escape(error.message)+'</p><a href="#teacher" class="button secondary">返回学员列表</a></section>';}
 }

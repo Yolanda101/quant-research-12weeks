@@ -2,12 +2,14 @@ import {weeks,weekById} from './curriculum.js';
 import {PythonEngine} from './python-engine.js';
 import {KEY,COURSE_KEY,LEGACY_COURSE_KEY,freshCourseState,normalizeCourseState,overallProgress} from './state.js';
 import {mountWorkbench} from './week01-workbench.js';
-import {mountFeedback} from './feedback.js';
+import {mountFeedback,mountTeacher,updateAccountStatus,authLink,isSyncLoading} from './feedback.js';
+import {PrivateSync} from './sync.js';
 
 const $=selector=>document.querySelector(selector);
 const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const chinese=['','一','二','三','四'];
-let course=freshCourseState(weeks),storageOK=true;
+let course=freshCourseState(weeks),storageOK=true,sync=null,portalConfig={backendEnabled:false,privatePortalUrl:''},anonymousCourse=null,browserStorage=null;
+try{browserStorage=window.localStorage;}catch{storageOK=false;}
 try{const saved=localStorage.getItem(COURSE_KEY)||localStorage.getItem(LEGACY_COURSE_KEY)||localStorage.getItem(KEY);if(saved)course=normalizeCourseState(JSON.parse(saved),weeks);}catch{storageOK=false;}
 let week=weekById(course.currentWeek),state=course.weeks[week.id],lessons=week.lessons,exercises=week.exercises;
 let activeExercise=exercises[0].id,busy=false,toastTimer,renderToken=0;
@@ -16,7 +18,8 @@ const engine=new PythonEngine({onStatus:({message})=>document.querySelectorAll('
 const url=(route='overview',id='')=>`#week/${week.id}/${route}${id?'/'+id:''}`;
 function toast(message){clearTimeout(toastTimer);$('#toast').textContent=message;$('#toast').hidden=false;toastTimer=setTimeout(()=>$('#toast').hidden=true,3500);}
 function save(){
- try{localStorage.setItem(COURSE_KEY,JSON.stringify(course));storageOK=true;}
+ if(sync?.user){if(sync.phase!=='loading')sync.update(course);return;}
+ try{localStorage.setItem(COURSE_KEY,JSON.stringify(course));storageOK=true;anonymousCourse=JSON.parse(JSON.stringify(course));}
  catch{storageOK=false;$('#notice').hidden=false;$('#notice').textContent='浏览器暂时无法保存记录，请使用导出记录备份。';}
  $('#storage-label').textContent=storageOK?'记录保存在此浏览器':'请导出记录备份';
 }
@@ -80,7 +83,7 @@ function labPage(id){
  let exercise=exercises.find(x=>x.id===id);const example=lessons.find(x=>'example-'+x.id===id);
  if(example)exercise={id,title:example.title,description:'这是讲义中的完整示例。先运行，再修改一个输入或参数并核对输出。',target:'修改代码后重新运行，观察结果',code:example.example,hint:'先核对数据和变量单位，再比较修改前后的结果。',check:''};
  if(!exercise)exercise=exercises[0];activeExercise=exercise.id;
- $('#main').innerHTML=heading('代码练习','先写出计算，再运行并检查。每次运行都会重新开始，请保留本题需要的全部代码。',exercises.length+' 项练习')+`<div class="lab-layout"><nav class="panel lab-nav" aria-label="练习目录">${exercises.map((x,i)=>`<button data-exercise="${x.id}" class="${x.id===exercise.id?'active':''}"><span>${String(i+1).padStart(2,'0')}</span>${escape(x.title)}${state.passed.includes(x.id)?' ✓':''}</button>`).join('')}${example?'<button class="active"><span>↳</span>讲义示例</button>':''}<p>代码自动保存到当前浏览器。首次运行需要下载 Python 环境和本周使用的计算工具。</p></nav><section class="panel"><div class="task"><h2>${escape(exercise.title)}</h2><p>${escape(exercise.description)}</p><div class="target">${escape(exercise.target)}</div><details><summary>查看提示</summary><p>${escape(exercise.hint)}</p></details></div>${editorHTML(state.drafts[exercise.id]??exercise.code)}<div class="export-help"><button id="download-practice" class="text-link">下载这段代码 ↓</button></div></section></div>`;
+ $('#main').innerHTML=heading('代码练习','先写出计算，再运行并检查。每次运行都会重新开始，请保留本题需要的全部代码。',exercises.length+' 项练习')+`<div class="lab-layout"><nav class="panel lab-nav" aria-label="练习目录">${exercises.map((x,i)=>`<button data-exercise="${x.id}" class="${x.id===exercise.id?'active':''}"><span>${String(i+1).padStart(2,'0')}</span>${escape(x.title)}${state.passed.includes(x.id)?' ✓':''}</button>`).join('')}${example?'<button class="active"><span>↳</span>讲义示例</button>':''}<p>代码会自动保存。登录后可同步到学习账号。首次运行需要下载 Python 环境和本周使用的计算工具。</p></nav><section class="panel"><div class="task"><h2>${escape(exercise.title)}</h2><p>${escape(exercise.description)}</p><div class="target">${escape(exercise.target)}</div><details><summary>查看提示</summary><p>${escape(exercise.hint)}</p></details></div>${editorHTML(state.drafts[exercise.id]??exercise.code)}<div class="export-help"><button id="download-practice" class="text-link">下载这段代码 ↓</button></div></section></div>`;
  document.querySelectorAll('[data-exercise]').forEach(button=>button.onclick=()=>location.hash=url('lab',button.dataset.exercise));
  attachEditor({key:exercise.id,initial:exercise.code,check:exercise.check});
  $('#download-practice').onclick=()=>download('week'+week.id+'-'+exercise.id+'.py',$('#code-editor').value);
@@ -95,41 +98,70 @@ async function assignmentPage(token){
  if(token!==renderToken)return;
  const template=assignmentTemplates.get(id);
  const downloads=`<div class="download-row">${assignment.dataFiles.map(f=>`<a class="button secondary small" href="./downloads/${f.file}" download>${escape(f.label)} ↓</a>`).join('')}<a class="button secondary small" href="./downloads/${filename}.py" download>Python 模板 ↓</a><a class="button secondary small" href="./downloads/${filename}.ipynb" download>Notebook 模板 ↓</a></div>`;
- $('#main').innerHTML=heading('本周作业',assignment.intro)+`<div class="homework-top">${assignment.sections}</div><section class="panel homework-brief"><h2>作业资料</h2>${downloads}</section><section class="panel assignment-workspace"><div class="task"><h2>完成作业</h2><p>补齐模板中的代码。文字解释在下方填写，导出时会一同保存。</p></div>${editorHTML(state.drafts.assignment??template,filename+'.py')}<div class="assignment-answer">${week.id==='01'?`<label for="audit-notes">五条记录的追溯笔记</label><p class="muted">每条写出原值、公开时间、首次可用时间、信号截止和最早成交，说明是否可以使用。</p><textarea id="audit-notes" placeholder="记录 1：证券或文档、原值、公开时间、首次可用时间、信号截止、最早成交、判断" style="min-height:220px">${escape(state.auditNotes||'')}</textarea>`:''}<h3>写下你的解释</h3>${assignment.questions.map((q,i)=>`<label for="answer-${i}">${i+1}. ${escape(q)}</label><textarea id="answer-${i}" data-answer="${i}" placeholder="用自己的话说明">${escape(state.answers[i])}</textarea>`).join('')}<div class="download-row"><button id="export-py" class="button primary">导出作业 .py ↓</button><button id="export-notebook" class="button secondary">导出 Notebook ↓</button></div></div></section>${week.id==='01'?`<section class="panel submission"><h2>提交作业</h2><ol><li>运行代码，点击“检查作业”并核对结果。</li><li>导出作业和 Notebook，保留一份副本。</li><li>打开“学习记录”，填写疑问，把学习记录和作业作为附件提交。</li><li>提交后可在同一页面查看教师回复。</li></ol><a class="button primary" href="${url('records')}">提交学习记录 ↗</a></section>`:`<section class="panel submission"><h2>提交作业</h2><ol><li>运行代码，再点击“检查作业”，确认计算结果。</li><li>导出 .py 或 Notebook 文件，保留一份本地副本。</li><li>在自己的作业仓库上传至 <code>submissions/你的ID/${filename}.py</code>，也可以提交 .ipynb 文件。</li><li>查看仓库 Actions 的检查结果，将作业链接发给指导者。根据反馈修改后重新提交。</li></ol><p class="muted">作业代码和文字解释保存在此浏览器。导出文件不会自动上传到 GitHub。</p><a class="text-link" href="./downloads/assignment-guide.md" download>下载提交说明 ↓</a></section>` }`;
+ $('#main').innerHTML=heading('本周作业',assignment.intro)+`<div class="homework-top">${assignment.sections}</div><section class="panel homework-brief"><h2>作业资料</h2>${downloads}</section><section class="panel assignment-workspace"><div class="task"><h2>完成作业</h2><p>补齐模板中的代码。文字解释在下方填写，导出时会一同保存。</p></div>${editorHTML(state.drafts.assignment??template,filename+'.py')}<div class="assignment-answer">${week.id==='01'?`<label for="audit-notes">五条记录的追溯笔记</label><p class="muted">每条写出原值、公开时间、首次可用时间、信号截止和最早成交，说明是否可以使用。</p><textarea id="audit-notes" placeholder="记录 1：证券或文档、原值、公开时间、首次可用时间、信号截止、最早成交、判断" style="min-height:220px">${escape(state.auditNotes||'')}</textarea>`:''}<h3>写下你的解释</h3>${assignment.questions.map((q,i)=>`<label for="answer-${i}">${i+1}. ${escape(q)}</label><textarea id="answer-${i}" data-answer="${i}" placeholder="用自己的话说明">${escape(state.answers[i])}</textarea>`).join('')}<div class="download-row"><button id="export-py" class="button primary">导出作业 .py ↓</button><button id="export-notebook" class="button secondary">导出 Notebook ↓</button></div></div></section><section class="panel submission"><h2>提交作业</h2><ol><li>运行代码，点击“检查作业”并核对结果。</li><li>写好解释和追溯笔记。</li><li>打开“学习记录”，登录账号后提交本周作业。</li><li>在“学习记录”查看教师回复。</li></ol><a class="button primary" href="${url('records')}">提交本周作业 ↗</a></section>`;
  attachEditor({key:'assignment',initial:template,check:assignment.check,assignment:true});$('#check-code').textContent='检查作业';
  document.querySelectorAll('[data-answer]').forEach(input=>input.oninput=()=>{state.answers[+input.dataset.answer]=input.value;state.assignmentReview=null;save();});
  if($('#audit-notes'))$('#audit-notes').oninput=event=>{state.auditNotes=event.target.value;save();};
  const code=()=>$('#code-editor').value+'\n\n# 文字解释\nanswers = '+JSON.stringify(state.answers,null,4)+'\n'+(week.id==='01'?'audit_notes = '+JSON.stringify(state.auditNotes||'')+'\n':'');
  $('#export-py').onclick=()=>download(filename+'.py',code());$('#export-notebook').onclick=()=>download(filename+'.ipynb',JSON.stringify(notebook(code()),null,2),'application/x-ipynb+json');
 }
+function importAnonymous(){
+ if(!anonymousCourse||!sync?.user)return;
+ if(!confirm('用登录前的记录替换当前账号记录？当前账号记录可以先导出备份。'))return;
+ sync.importLocal(anonymousCourse);toast('记录已导入，正在等待同步');
+}
+function refreshSyncStatus(snapshot=sync?.snapshot()){
+ if(!snapshot)return;
+ $('#storage-label').textContent=snapshot.label;
+ const loading=portalConfig.backendEnabled&&isSyncLoading(snapshot.phase);$('#import-progress').disabled=loading;$('#progress-file').disabled=loading;
+ const bar=$('#account-bar');
+ if(bar){
+  const user=snapshot.user;
+  bar.innerHTML=user?`<span>${escape(user.name||user.email||'学习账号')}</span><span class="account-sync" data-phase="${escape(snapshot.phase)}">${escape(snapshot.label)}</span>${user.role==='teacher'?'<a class="text-link" href="#teacher">学员记录</a>':''}<a class="text-link" href="${url('records')}">学习账号</a>${snapshot.phase==='expired'?`<a class="text-link" href="${authLink()}" target="_top">重新登录</a>`:''}`:portalConfig.backendEnabled?`<span>${escape(snapshot.label)}</span><a class="text-link" href="${authLink()}" target="_top">登录学习账号</a>`:portalConfig.privatePortalUrl?`<span>登录后自动同步学习记录</span><a class="text-link" href="${escape(portalConfig.privatePortalUrl+'#week/01/records')}">进入学习账号 ↗</a>`:'';
+ }
+ const root=$('#feedback-root');if(root)updateAccountStatus(root,snapshot,{onRemote:()=>{if(confirm('使用云端记录？当前草稿可以先导出备份。'))sync.useRemote();},onLocal:()=>{if(confirm('用当前草稿更新云端记录？'))sync.keepLocal();},onExport:()=>download('quant-study-progress.json',JSON.stringify(course,null,2),'application/json')});
+}
 function recordsPage(){
  const profile=course.feedback[week.id]||(course.feedback[week.id]={});
- $('#main').innerHTML=heading('学习记录','查看本周完成情况，提交问题和作业，收到教师回复。')+'<div id="feedback-root"></div>';
- mountFeedback($('#feedback-root'),{week,state,profile,onChange:()=>save()});
+ $('#main').innerHTML=heading('学习记录','查看完成情况、提交作业和向教师提问。')+'<div id="feedback-root"></div>';
+ mountFeedback($('#feedback-root'),{week,state,profile,onChange:()=>save(),sync,config:portalConfig,anonymousAvailable:!!anonymousCourse&&Object.values(anonymousCourse.weeks||{}).some(w=>w.read?.length||Object.keys(w.drafts||{}).length),onImportAnonymous:importAnonymous,onConflict:()=>refreshSyncStatus()});
 }
 function updateNavigation(route){
  const weekLabel=`第${chinese[week.number]}周 · ${week.title}`;
  document.title=week.title+' · 量化研究';
  $('.brand').href=url();$('.brand small').textContent=weekLabel;$('.footer span').textContent='量化研究 · 第'+chinese[week.number]+'周';
- document.querySelectorAll('[data-nav]').forEach(link=>{link.hidden=['workbench','records'].includes(link.dataset.nav)&&week.id!=='01';link.classList.toggle('active',link.dataset.nav===route);link.href=url(link.dataset.nav,link.dataset.nav==='lesson'?state.lastLesson:'');});
+ document.querySelectorAll('[data-nav]').forEach(link=>{link.hidden=link.dataset.nav==='workbench'&&week.id!=='01';link.classList.toggle('active',link.dataset.nav===route);link.href=url(link.dataset.nav,link.dataset.nav==='lesson'?state.lastLesson:'');});
  $('#week-nav').innerHTML=weeks.map(w=>`<a href="#week/${w.id}/overview" ${w.id===week.id?'aria-current="page"':''}><span>第${chinese[w.number]}周</span>${escape(w.title)}</a>`).join('');
 }
 async function render(){
  const token=++renderToken;if(busy)engine.cancel();busy=false;
+ if(portalConfig.backendEnabled&&(!sync||isSyncLoading(sync.phase))){$('#main').innerHTML='<section class="panel homework-brief"><p role="status">正在读取学习记录，请稍候。</p></section>';return;}
  const parts=(location.hash.slice(1)||'overview').split('/');
+ if(parts[0]==='teacher'){updateNavigation('teacher');$('#main').innerHTML='<div class="heading-row"><div><div class="eyebrow">教师页面</div><h1>学员记录</h1><p class="description">进度、作业和问题仅本人及教师可见。</p></div></div><div id="teacher-root"></div>';if(!sync||sync.phase==='checking'||sync.phase==='loading')$('#teacher-root').textContent='正在确认账号。';else await mountTeacher($('#teacher-root'),{sync,weeks,studentId:parts[1]==='student'?decodeURIComponent(parts[2]||''):null,isCurrent:()=>token===renderToken});return;}
  const explicitWeek=parts[0]==='week';
  const selected=explicitWeek?weekById(parts[1]):weekById(location.hash?'01':course.currentWeek);
  const switched=selected.id!==week.id;week=selected;state=course.weeks[week.id];lessons=week.lessons;exercises=week.exercises;course.currentWeek=week.id;
  if(switched)activeExercise=exercises[0].id;
  const route=explicitWeek?(parts[2]||'overview'):parts[0],id=explicitWeek?parts[3]:parts[1];
- updateNavigation(route);save();
- if(route==='lesson')lessonPage(id);else if(route==='lab')labPage(id||activeExercise);else if(route==='assignment')await assignmentPage(token);else if(route==='workbench'&&week.id==='01')await workbenchPage(token);else if(route==='records'&&week.id==='01')recordsPage();else overview();
+ updateNavigation(route);save();refreshSyncStatus();
+ if(route==='lesson')lessonPage(id);else if(route==='lab')labPage(id||activeExercise);else if(route==='assignment')await assignmentPage(token);else if(route==='workbench'&&week.id==='01')await workbenchPage(token);else if(route==='records')recordsPage();else overview();
  if(token===renderToken)window.scrollTo({top:0,behavior:'instant'});
 }
 $('#export-progress').onclick=()=>download('quant-study-progress.json',JSON.stringify({...course,exportedAt:new Date().toISOString()},null,2),'application/json');
 $('#import-progress').onclick=()=>$('#progress-file').click();
-$('#progress-file').onchange=async event=>{const file=event.target.files[0];if(!file)return;try{if(file.size>2500000)throw new Error('记录文件过大');const imported=normalizeCourseState(JSON.parse(await file.text()),weeks);if(!confirm('导入记录会替换当前浏览器中的进度和代码，是否继续？'))return;course=imported;save();const destination='#week/'+course.currentWeek+'/overview';if(location.hash===destination)await render();else location.hash=destination;toast('记录已导入');}catch(error){toast('无法导入：'+error.message);}finally{event.target.value='';}};
+$('#progress-file').onchange=async event=>{const file=event.target.files[0];if(!file)return;try{if(file.size>2500000)throw new Error('记录文件过大');const imported=normalizeCourseState(JSON.parse(await file.text()),weeks);if(portalConfig.backendEnabled&&isSyncLoading(sync?.phase))throw new Error('请等学习记录读取完成后再导入');if(!confirm('导入记录会替换当前浏览器中的进度和代码，是否继续？'))return;if(sync?.user){sync.importLocal(imported);}else{course=imported;save();}const destination='#week/'+course.currentWeek+'/overview';if(location.hash===destination)await render();else location.hash=destination;toast('记录已导入');}catch(error){toast('无法导入：'+error.message);}finally{event.target.value='';}};
 document.querySelector('.skip').onclick=event=>{event.preventDefault();$('#main').focus();};
 window.addEventListener('hashchange',render);
 if(!storageOK){$('#notice').hidden=false;$('#notice').textContent='原有记录无法读取，当前使用空白记录。请用导出的文件恢复。';}
-render();
+anonymousCourse=JSON.parse(JSON.stringify(course));
+async function initializeSync(){
+ try{const response=await fetch('./portal-config.json',{cache:'no-store'});if(response.ok)portalConfig=await response.json();}catch{}
+ let identity='',previousPhase='';
+ sync=new PrivateSync({enabled:portalConfig.backendEnabled===true,fetcher:fetch.bind(window),storage:browserStorage,fresh:()=>freshCourseState(weeks),normalize:raw=>normalizeCourseState(raw,weeks),onState:next=>{course=next;state=course.weeks[week.id];if(!isSyncLoading(sync?.phase))render();},onStatus:snapshot=>{refreshSyncStatus(snapshot);const nextIdentity=(snapshot.user?.id||'')+':'+(snapshot.user?.role||'')+':'+(['guest','error'].includes(snapshot.phase)?snapshot.phase:'');const loadingChanged=isSyncLoading(previousPhase)!==isSyncLoading(snapshot.phase),identityChanged=nextIdentity!==identity;previousPhase=snapshot.phase;identity=nextIdentity;if(loadingChanged||(identityChanged&&(location.hash.includes('/records')||location.hash.startsWith('#teacher'))))render();}});
+ refreshSyncStatus();await sync.start();
+ if(location.hash.includes('/records')||location.hash.startsWith('#teacher'))render();
+}
+window.addEventListener('online',()=>sync?.flush());
+window.addEventListener('focus',()=>{if(sync?.user){if(sync.dirty)sync.flush();else sync.reload();}});
+window.addEventListener('pagehide',()=>{if(sync?.user)sync.cache();});
+render();initializeSync();
