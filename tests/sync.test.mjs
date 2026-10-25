@@ -30,3 +30,14 @@ test('default browser fetch keeps its Window receiver',async()=>{
  try{const sync=new PrivateSync({enabled:true,storage:storage()});await sync.start();assert.equal(sync.phase,'guest');}
  finally{globalThis.fetch=originalFetch;}
 });
+test('student password login loads only the authenticated account and never persists credentials',async()=>{
+ const saved=storage(),calls=[];let loggedIn=false;
+ const sync=new PrivateSync({enabled:true,storage:saved,fresh:()=>state(0),fetcher:async(path,options)=>{calls.push({path,options});if(path==='/api/auth/login'){loggedIn=true;return response({user:{id:'password-student'}});}if(path==='/api/me')return response({user:loggedIn?{id:'password-student',role:'student',authMethod:'password'}:null});return response({state:state(9),version:4});}});
+ await sync.start();await sync.authenticate('login',{username:'learner_01',password:'A-secret-password'});assert.equal(sync.user.id,'password-student');assert.equal(sync.state.value,9);assert.equal(sync.phase,'ready');const auth=calls.find(c=>c.path==='/api/auth/login');assert.equal(auth.options.headers['X-Account-ID'],undefined);assert.equal(JSON.parse(auth.options.body).username,'learner_01');assert.equal(calls.filter(c=>c.options.method==='PUT').length,0);assert.doesNotMatch([...saved.values.values()].join(''),/A-secret-password|learner_01/);sync.stop();
+});
+test('bad student password leaves login form state without an expired private session',async()=>{
+ const sync=new PrivateSync({enabled:true,storage:storage(),fetcher:async(path)=>path==='/api/me'?response({user:null}):response({error:'用户名或密码错误'},401)});await sync.start();await assert.rejects(()=>sync.authenticate('login',{username:'learner_01',password:'bad-password'}),/用户名或密码错误/);assert.equal(sync.phase,'guest');assert.equal(sync.user,null);sync.stop();
+});
+test('starting a different authenticated account cancels an old queued upload',async()=>{
+ let current='student-a',putCount=0;const sync=new PrivateSync({enabled:true,delay:100000,storage:storage(),fresh:()=>state(0),fetcher:async(path,o)=>{if(path==='/api/me')return response({user:{id:current}});if(o.method==='PUT')putCount++;return response({state:state(current==='student-a'?1:2),version:1});}});await sync.start();sync.update(state(88));current='student-b';await sync.start();assert.equal(sync.user.id,'student-b');assert.equal(sync.state.value,2);assert.equal(sync.dirty,false);assert.equal(putCount,0);assert.equal(sync.timer,null);sync.stop();
+});
